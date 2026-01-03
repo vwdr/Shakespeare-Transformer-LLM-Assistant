@@ -6,11 +6,9 @@ from tokenizers import Tokenizer
 import gradio as gr
 
 from model import MiniTransformerLM, ModelConfig
+from prompts import SYSTEM_PROMPT
 from safety import is_unsafe, REFUSAL_MESSAGE
-
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. Reply in a light Shakespearean tone while staying clear and relevant.\n"
-)
+from shakespeare_fallback import translate_polished
 
 def load_instruct_model(seq_len=128):
     tokenizer = Tokenizer.from_file("tokenizer.json")
@@ -53,19 +51,29 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 @torch.no_grad()
-def generate_reply(prompt, history, temperature=0.6, top_k=30, max_new_tokens=80, seq_len=128):
+def generate_reply(
+    prompt,
+    history,
+    mode,
+    temperature=0.0,
+    top_k=0,
+    max_new_tokens=80,
+    seq_len=128,
+):
     # history is list of [user, assistant] pairs (gradio format)
-    # Build a chat-style prompt
-    convo = SYSTEM_PROMPT
-    for user_msg, assistant_msg in history:
-        convo += f"User: {user_msg}\nAssistant: {assistant_msg}\n"
-    convo += f"User: {prompt}\nAssistant: "
-
     if is_unsafe(prompt):
         return REFUSAL_MESSAGE
 
+    if mode == "Polished (Gen AI Translator)":
+        return translate_polished(prompt)
+
+    convo = f"{SYSTEM_PROMPT}User: {prompt}\nAssistant: "
+
     encoded = tokenizer.encode(convo)
     ids = encoded.ids
+    bos_id = tokenizer.token_to_id("[BOS]")
+    if bos_id is not None:
+        ids = [bos_id] + ids
     # cut to last seq_len-1 tokens
     ids = ids[-(seq_len-1):]
 
@@ -78,15 +86,19 @@ def generate_reply(prompt, history, temperature=0.6, top_k=30, max_new_tokens=80
             input_ids = input_ids[:, -seq_len:]
 
         logits = model(input_ids)
-        logits = logits[:, -1, :] / max(temperature, 1e-6)
-        probs = torch.softmax(logits, dim=-1)
+        logits = logits[:, -1, :]
+        if temperature <= 0:
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            logits = logits / temperature
+            probs = torch.softmax(logits, dim=-1)
 
-        if top_k > 0:
-            values, indices = torch.topk(probs, top_k)
-            probs_filtered = torch.zeros_like(probs).scatter_(1, indices, values)
-            probs = probs_filtered / probs_filtered.sum(dim=-1, keepdim=True)
+            if top_k > 0:
+                values, indices = torch.topk(probs, top_k)
+                probs_filtered = torch.zeros_like(probs).scatter_(1, indices, values)
+                probs = probs_filtered / probs_filtered.sum(dim=-1, keepdim=True)
 
-        next_token = torch.multinomial(probs, num_samples=1)
+            next_token = torch.multinomial(probs, num_samples=1)
         input_ids = torch.cat([input_ids, next_token], dim=1)
 
         token_id = next_token.item()
@@ -117,20 +129,27 @@ def generate_reply(prompt, history, temperature=0.6, top_k=30, max_new_tokens=80
 
     return reply
 
-def chat_fn(message, history):
+def chat_fn(message, history, mode):
     """
     Gradio ChatInterface callback. History comes in as list of (user, assistant) tuples.
     Return only the assistant reply; Gradio will append it to the history it manages.
     """
-    reply = generate_reply(message, history or [])
+    reply = generate_reply(message, history or [], mode)
     return reply
+
+mode_selector = gr.Radio(
+    choices=["Polished (Gen AI Translator)", "Pure Model"],
+    value="Polished (Gen AI Translator)",
+    label="Output mode",
+)
 
 demo = gr.ChatInterface(
     fn=chat_fn,
-    title="Mini LLM Assistant (Your Model)",
+    title="Shakespearean Translator (Mini LLM)",
     chatbot=gr.Chatbot(type="tuples", height=420),
     textbox=gr.Textbox(label="Your message", placeholder="Ask anything..."),
     clear_btn="Clear",
+    additional_inputs=[mode_selector],
 )
 
 if __name__ == "__main__":

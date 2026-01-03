@@ -5,11 +5,9 @@ import torch
 from tokenizers import Tokenizer
 
 from model import MiniTransformerLM, ModelConfig
+from prompts import SYSTEM_PROMPT
 from safety import is_unsafe, REFUSAL_MESSAGE
-
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. Reply in a light Shakespearean tone while staying clear and relevant.\n"
-)
+from shakespeare_fallback import translate_polished
 
 
 def load_instruct_model(seq_len=128):
@@ -59,8 +57,9 @@ def generate_reply(
     device,
     prompt,
     history,
-    temperature=0.6,
-    top_k=30,
+    mode,
+    temperature=0.0,
+    top_k=0,
     max_new_tokens=80,
     seq_len=128,
 ):
@@ -69,17 +68,19 @@ def generate_reply(
 
     history: list of (user, assistant) tuples.
     """
-    # Build the chat-style context
-    convo = SYSTEM_PROMPT
-    for user_msg, assistant_msg in history:
-        convo += f"User: {user_msg}\nAssistant: {assistant_msg}\n"
-    convo += f"User: {prompt}\nAssistant: "
-
     if is_unsafe(prompt):
         return REFUSAL_MESSAGE
 
+    if mode == "polished":
+        return translate_polished(prompt)
+
+    convo = f"{SYSTEM_PROMPT}User: {prompt}\nAssistant: "
+
     encoded = tokenizer.encode(convo)
     ids = encoded.ids
+    bos_id = tokenizer.token_to_id("[BOS]")
+    if bos_id is not None:
+        ids = [bos_id] + ids
     # keep only last seq_len-1 tokens if too long
     ids = ids[-(seq_len - 1):]
 
@@ -92,15 +93,19 @@ def generate_reply(
             input_ids = input_ids[:, -seq_len:]
 
         logits = model(input_ids)
-        logits = logits[:, -1, :] / max(temperature, 1e-6)
-        probs = torch.softmax(logits, dim=-1)
+        logits = logits[:, -1, :]
+        if temperature <= 0:
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            logits = logits / temperature
+            probs = torch.softmax(logits, dim=-1)
 
-        if top_k > 0:
-            values, indices = torch.topk(probs, top_k)
-            probs_filtered = torch.zeros_like(probs).scatter_(1, indices, values)
-            probs = probs_filtered / probs_filtered.sum(dim=-1, keepdim=True)
+            if top_k > 0:
+                values, indices = torch.topk(probs, top_k)
+                probs_filtered = torch.zeros_like(probs).scatter_(1, indices, values)
+                probs = probs_filtered / probs_filtered.sum(dim=-1, keepdim=True)
 
-        next_token = torch.multinomial(probs, num_samples=1)
+            next_token = torch.multinomial(probs, num_samples=1)
         input_ids = torch.cat([input_ids, next_token], dim=1)
 
         token_id = next_token.item()
@@ -133,6 +138,8 @@ def main():
     print("Model loaded. Type 'exit' to quit.\n")
 
     history = []
+    mode = "polished"
+    print("Mode: polished (type /pure or /polished to switch).")
 
     while True:
         try:
@@ -145,6 +152,15 @@ def main():
             print("Goodbye!")
             break
 
+        if user_input.lower() == "/pure":
+            mode = "pure"
+            print("Mode set to pure.\n")
+            continue
+        if user_input.lower() == "/polished":
+            mode = "polished"
+            print("Mode set to polished.\n")
+            continue
+
         if not user_input:
             continue
 
@@ -154,8 +170,9 @@ def main():
             device=device,
             prompt=user_input,
             history=history,
-            temperature=0.8,
-            top_k=20,
+            mode=mode,
+            temperature=0.0,
+            top_k=0,
             max_new_tokens=80,
             seq_len=128,
         )

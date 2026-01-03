@@ -10,7 +10,7 @@ from prepare_instructions import build_instruction_tensors
 def finetune_instructions(
     seq_len=128,
     batch_size=8,
-    lr=1e-5,
+    lr=5e-5,
     num_epochs=3
 ):
     if torch.backends.mps.is_available():
