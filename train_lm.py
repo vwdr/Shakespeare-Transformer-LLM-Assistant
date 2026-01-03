@@ -8,14 +8,15 @@ from model import MiniTransformerLM, ModelConfig
 from data_loader import create_dataloaders
 
 def train_language_model(
-    num_epochs=3,
+    num_epochs=1,
     lr=3e-4,
     seq_len=128,
-    batch_size=32,
+    batch_size=64,
     d_model=256,
     n_heads=4,
     n_layers=4,
-    d_ff=1024
+    d_ff=1024,
+    max_steps=1500,
 ):
     # Device: MPS (Apple Silicon) -> CUDA -> CPU
     if torch.backends.mps.is_available():
@@ -64,6 +65,7 @@ def train_language_model(
     for epoch in range(num_epochs):
         model.train()
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+        step = 0
         for x, y in pbar:
             x = x.to(device)
             y = y.to(device)
@@ -78,6 +80,9 @@ def train_language_model(
             optimizer.step()
 
             pbar.set_postfix(loss=loss.item())
+            step += 1
+            if max_steps and step >= max_steps:
+                break
 
         val_loss = evaluate()
         print(f"Validation loss after epoch {epoch+1}: {val_loss:.4f}")

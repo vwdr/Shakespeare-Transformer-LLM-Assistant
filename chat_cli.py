@@ -1,9 +1,15 @@
 # chat_cli.py
+import re
+
 import torch
 from tokenizers import Tokenizer
 
 from model import MiniTransformerLM, ModelConfig
 from safety import is_unsafe, REFUSAL_MESSAGE
+
+SYSTEM_PROMPT = (
+    "You are a helpful assistant. Reply in a light Shakespearean tone while staying clear and relevant.\n"
+)
 
 
 def load_instruct_model(seq_len=128):
@@ -27,6 +33,25 @@ def load_instruct_model(seq_len=128):
     return model, tokenizer, device
 
 
+def clean_text(text: str) -> str:
+    """Lightly post-process model output to tidy spacing and contractions."""
+    text = text.replace(" \n", "\n").replace("\n ", "\n")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([.,!?;:])", r"\1", text)
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+    for pat, repl in [
+        (" n't", "n't"),
+        (" 's", "'s"),
+        (" 'm", "'m"),
+        (" 're", "'re"),
+        (" 've", "'ve"),
+        (" 'd", "'d"),
+        (" 'll", "'ll"),
+    ]:
+        text = text.replace(pat, repl)
+    return text.strip()
+
+
 @torch.no_grad()
 def generate_reply(
     model,
@@ -34,8 +59,8 @@ def generate_reply(
     device,
     prompt,
     history,
-    temperature=0.8,
-    top_k=20,
+    temperature=0.6,
+    top_k=30,
     max_new_tokens=80,
     seq_len=128,
 ):
@@ -45,7 +70,7 @@ def generate_reply(
     history: list of (user, assistant) tuples.
     """
     # Build the chat-style context
-    convo = ""
+    convo = SYSTEM_PROMPT
     for user_msg, assistant_msg in history:
         convo += f"User: {user_msg}\nAssistant: {assistant_msg}\n"
     convo += f"User: {prompt}\nAssistant: "
@@ -59,6 +84,8 @@ def generate_reply(
     ids = ids[-(seq_len - 1):]
 
     input_ids = torch.tensor([ids], dtype=torch.long).to(device)
+    start_len = input_ids.shape[1]
+    eos_id = tokenizer.token_to_id("[EOS]")
 
     for _ in range(max_new_tokens):
         if input_ids.shape[1] > seq_len:
@@ -77,22 +104,25 @@ def generate_reply(
         input_ids = torch.cat([input_ids, next_token], dim=1)
 
         token_id = next_token.item()
-        eos_id = tokenizer.token_to_id("[EOS]")
         if eos_id is not None and token_id == eos_id:
             break
 
     output_ids = input_ids[0].cpu().tolist()
-    text = tokenizer.decode(output_ids, skip_special_tokens=True)
+    new_token_ids = output_ids[start_len:]
+    decode_ids = new_token_ids if new_token_ids else output_ids
+    text = tokenizer.decode(decode_ids, skip_special_tokens=True)
 
-    # Try to extract only the last assistant reply
-    if "User:" in text:
-        parts = text.split("User:")
-        last = "User:".join(parts[-1:])
-        if "Assistant:" in last:
-            last = last.split("Assistant:")[-1]
-        reply = last.strip()
-    else:
-        reply = text
+    reply = clean_text(text)
+    if "Assistant:" in reply:
+        reply = clean_text(reply.split("Assistant:", 1)[-1])
+    if "User:" in reply:
+        reply = clean_text(reply.split("User:", 1)[-1])
+    parts = re.split(r"(?<=[.!?])\s+", reply)
+    if parts and parts[0].strip():
+        reply = parts[0].strip()
+    words = reply.split()
+    if len(words) > 40:
+        reply = " ".join(words[:40]).rstrip(",.;:") + "."
 
     return reply
 
