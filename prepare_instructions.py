@@ -1,4 +1,3 @@
-# prepare_instructions.py
 import json
 
 import torch

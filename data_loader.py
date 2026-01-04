@@ -1,4 +1,3 @@
-# data_loader.py
 import torch
 from tokenizers import Tokenizer
 from torch.utils.data import Dataset, DataLoader
