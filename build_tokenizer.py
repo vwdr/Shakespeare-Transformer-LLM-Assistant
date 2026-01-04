@@ -1,14 +1,13 @@
-# build_tokenizer.py
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers import decoders
 
-VOCAB_SIZE = 2000  # small for demo; you can bump to 5000 later
+VOCAB_SIZE = 2000  # small for demo; bump to 5000 later
 
 def build_tokenizer():
-    # Initialize empty BPE model
+    # init empty BPE model
     tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
     tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=True)
     tokenizer.decoder = decoders.ByteLevel()
@@ -23,7 +22,7 @@ def build_tokenizer():
     files = ["data_raw.txt"]
     tokenizer.train(files, trainer)
 
-    # Save tokenizer JSON so we can reload later
+    # Save tokenizer JSON so --> reload later
     tokenizer.save("tokenizer.json")
     print("Tokenizer trained and saved to tokenizer.json")
 

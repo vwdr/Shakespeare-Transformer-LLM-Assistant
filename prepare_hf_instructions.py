@@ -1,4 +1,3 @@
-# prepare_hf_instructions.py
 import argparse
 import json
 import re

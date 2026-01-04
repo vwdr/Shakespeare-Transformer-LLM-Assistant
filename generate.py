@@ -1,4 +1,3 @@
-# generate.py
 import torch
 from tokenizers import Tokenizer
 

@@ -1,4 +1,3 @@
-# chat_app.py
 import re
 
 import torch

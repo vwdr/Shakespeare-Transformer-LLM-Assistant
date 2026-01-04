@@ -1,5 +1,3 @@
-# safety.py
-
 DISALLOWED_KEYWORDS = [
     "build a bomb",
     "make a weapon",
